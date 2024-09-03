@@ -11,7 +11,6 @@
   "creation_date": "2024-06-19",
   "crs": "EPSG:4326",
   "bounding_box": [-84.38419281, 41.98507081, -74.73687597, 46.526447022],
-  "version": "1.0",
   "source": "Yellow Pages",
   "columns": {
     "addr": {
