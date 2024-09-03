@@ -1,7 +1,7 @@
 # Yellow Pages Retailer Metadata
 *This file describes the metadata for spatial_YP.geojson. This metadata is also embedded in the geojson file.*
 
-**Data Title**: Scarborough and Markham South Asian Foodscape Data (1996 - 2016)
+**Data Title**: Scarborough and Markham South Asian Foodscape Data (1996 - 2016) <br>
 **Description**: This dataset contains the locations, names, and classifications of grocery stores and restaurants in Scarborough and Markham, Ontario for the years 1996, 2001, 2006, and 2016.
 **Keywords**: Food environment, Greater Toronto Area
 **Author**: [Aisha Nur Syed](aishan.syed@mail.utoronto.ca)
