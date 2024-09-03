@@ -40,7 +40,7 @@ library(fixest)
 library(plm)
 library(SDPDmod)
 
-options(cancensus.api_key = "CensusMapper_f9ab9c536d9532418857bb70d03df16d")
+options(cancensus.api_key = "CensusMapper_")
 dir_create("./cache")
 options(cancensus.cache_path = "./cache")
 ```
