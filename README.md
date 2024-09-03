@@ -7,7 +7,7 @@ In geographies that have a considerable number of immigrants, like the communiti
 *This repository includes data used for this project. Analysis code provided in R code in a quarto document.*
 
 ## Retailer Data
-Retailer data was obtained from the Yellow Pages Grocery and Restaurant Sections for Scarborough and Markham for the years 1996, 2001, 2006, and 2016. These retailer names and addresses were manually inputted into and classified into retailer categories in an excel sheet. The process used to clean and geocode this data was completed in Python in a Jupyter Notebook and may be found in the "YP_Cleaning" folder. The final data used in the analysis may be found in the data folder under spation_YP.geojson.
+Retailer data was obtained from the Yellow Pages Grocery and Restaurant Sections for Scarborough and Markham for the years 1996, 2001, 2006, and 2016. These retailer names and addresses were manually inputted into and classified into retailer categories in an excel sheet. The process used to clean and geocode this data was completed in Python in a Jupyter Notebook and may be found in the "YP_Cleaning" folder. The final data and accompanying metadata used in the analysis may be found in the [data](data) folder under spation_YP.geojson.
 
 ## Census tract apportionment
 The process and crosswalk tables used to apportion census data were obtained from [Jeff Allen's CLTD repository](https://github.com/jamaps/CLTD/tree/master).
