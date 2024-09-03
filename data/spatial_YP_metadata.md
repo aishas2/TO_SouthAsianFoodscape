@@ -4,7 +4,7 @@
 **Data Title**: Scarborough and Markham South Asian Foodscape Data (1996 - 2016) <br>
 **Description**: This dataset contains the locations, names, and classifications of grocery stores and restaurants in Scarborough and Markham, Ontario for the years 1996, 2001, 2006, and 2016.<br>
 **Keywords**: Food environment, Greater Toronto Area<br>
-**Author**: [Aisha Nur Syed](aishan.syed@mail.utoronto.ca)<br>
+**Author**: [Aisha Nur Syed](https://aishas25.wixsite.com/aisha-syed)<br>
 **Creation Date**: June 19, 2024<br>
 **CRS**: EPSG:4326<br>
 **Bounding Box**: -84.38419281, 41.98507081, -74.73687597, 46.526447022<br>
