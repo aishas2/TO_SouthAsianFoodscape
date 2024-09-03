@@ -11,9 +11,9 @@
 **Source**: Yellow Pages<br>
 
 ## Variables
-**addr**: Full address of food retailer.<br>
-    Data type: String<br>
-    Example: "5 Hillcroft Dr, Markham, Ontario, L3S 1R7"<br><br>
+**"addr"**: Full address of food retailer.<br>
+&nbsp;&nbsp;&nbsp;&nbsp;Data type: String<br>
+&nbsp;&nbsp;&nbsp;&nbsp;Example: "5 Hillcroft Dr, Markham, Ontario, L3S 1R7"<br><br>
 
 **City**: Region where retailer is located.<br>
     Data type: String<br>
