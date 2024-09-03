@@ -1,0 +1,1467 @@
+---
+title: "MA Thesis Code"
+author: "Aisha Syed"
+output: html
+toc: true
+embed-resources: true
+---
+
+```{r}
+#| label: load libraries and set up environment
+
+library(tidyverse)
+library(fs)
+library(ggpubr)
+library(scales)
+library(cancensus)
+library(sf)
+library(sfdep)
+library(tmap)
+library(modelsummary)
+library(DataExplorer)
+library(zoo)
+library(imputeTS)
+library(Kendall) #for ehsa
+library(lubridate) #for date
+library(gt)
+library(egg)
+library(opendatatoronto)
+
+library(car)
+library(modelr)
+library(performance)
+library(see)
+library(jtools)
+
+library(spdep)
+library(spatialreg)
+library(spgwr)
+library(fixest)
+library(plm)
+library(SDPDmod)
+
+options(cancensus.api_key = "CensusMapper_f9ab9c536d9532418857bb70d03df16d")
+dir_create("./cache")
+options(cancensus.cache_path = "./cache")
+```
+
+# Find and Clean Data
+## Demographic Data
+```{r}
+#| label: find census vectors
+
+Bangladesh_1996 = "v_CA1996_216" #recent only
+SriLanka_1996 = "v_CA1996_144"
+Pakistan_1996 = "v_CA1996_156"
+India_1996 = "v_CA1996_133"
+mhinc_1996 = 'v_CA1996_1627'
+bachplus_1996 = 'v_CA1996_1360'
+
+Bangladesh_2001 = "v_CA01_449"
+SriLanka_2001 = "v_CA01_420"
+Pakistan_2001 = "v_CA01_422"
+India_2001 = "v_CA01_410"
+bachplus_2001 = 'v_CA01_1397'
+mhinc_2001 = 'v_CA01_1634'
+
+Bangladesh_2006 = "v_CA06_2107"
+SriLanka_2006 = "v_CA06_2083"
+Pakistan_2006 = "v_CA06_2080"
+India_2006 = "v_CA06_2071"
+mhinc_2006 = 'v_CA06_2000'
+bach_2006young = 'v_CA06_1243'
+bach_2006mid = 'v_CA06_1257'
+bach_2006old = 'v_CA06_1271'
+plusbach_2006young = 'v_CA06_1244'
+plusbach_2006mid = 'v_CA06_1258'
+plusbach_2006old = 'v_CA06_1272'
+
+Bangladesh_2016 = "v_CA16_3585"
+SriLanka_2016 = "v_CA16_3618"
+Pakistan_2016 = "v_CA16_3612"
+India_2016 = "v_CA16_3594"
+bachplus_2016 = 'v_CA16_5078'
+mhinc_2016 = 'v_CA16_2397'
+```
+
+```{r}
+#| label: retrieve census data
+
+census96 = get_census(
+  dataset = 'CA1996', 
+  regions = list(CSD = c("3520001", "3519036")),
+  vectors = c("Bangladesh_1996" = Bangladesh_1996,
+              "Pakistan_1996" = Pakistan_1996,
+              "SriLanka_1996" = SriLanka_1996,
+              "India_1996" = India_1996,
+              'mhinc_1996' = mhinc_1996,
+'bachplus_1996' = bachplus_1996),
+  level = 'CT',
+  use_cache = TRUE,
+  geo_format = 'sf') |> 
+  st_transform(crs = 'ESRI:102010') # project to nad 1983 zone 17n
+
+census01 = get_census(
+  dataset = 'CA01', 
+  regions = list(CSD = c("3520005", "3519036")),
+  vectors = c("Bangladesh_2001" = Bangladesh_2001,
+              "Pakistan_2001" = Pakistan_2001,
+              "SriLanka_2001" = SriLanka_2001,
+              "India_2001" = India_2001,
+              'bachplus_2001' = bachplus_2001,
+'mhinc_2001' = mhinc_2001),
+  level = 'CT',
+  use_cache = TRUE,
+  geo_format = 'sf') |> 
+  st_transform(crs = 'ESRI:102010') # project to nad 1983 zone 17n
+
+census06 = get_census(
+  dataset = 'CA06', 
+  regions = list(CSD = c("3520005", "3519036")),
+  vectors = c("Bangladesh_2006" = Bangladesh_2006,
+              "Pakistan_2006" = Pakistan_2006,
+              "SriLanka_2006" = SriLanka_2006,
+              "India_2006" = India_2006,
+              'mhinc_2006' = mhinc_2006,
+              'bach_2006young' = bach_2006young,
+'bach_2006mid' = bach_2006mid,
+'bach_2006old' = bach_2006old,
+'plusbach_2006young' = plusbach_2006young,
+'plusbach_2006mid' = plusbach_2006mid,
+'plusbach_2006old' = plusbach_2006old),
+  level = 'CT',
+  use_cache = TRUE,
+  geo_format = 'sf') |> 
+  st_transform(crs = 'ESRI:102010') 
+
+
+census16 = get_census(
+  dataset = 'CA16', 
+  regions = list(CSD = c("3520005", "3519036")),
+  vectors = c("Bangladesh_2016" = Bangladesh_2016,
+              "Pakistan_2016" = Pakistan_2016,
+              "SriLanka_2016" = SriLanka_2016,
+              "India_2016" = India_2016,
+              'bachplus_2016' = bachplus_2016,
+'mhinc_2016' = mhinc_2016
+              ),
+  level = 'CT',
+  use_cache = TRUE,
+  geo_format = 'sf') |> 
+  st_transform(crs = 'ESRI:102010')
+
+```
+
+```{r}
+#| label: calculate % bachelor's plus variable for 2006
+
+census06$bachplus_2006 = census06$bach_2006young + census06$bach_2006mid + census06$bach_2006old + census06$plusbach_2006young + census06$plusbach_2006mid + census06$plusbach_2006old
+```
+
+```{r}
+#| label: apportion data to 2016 census geometries
+
+apportion = function(cw, df, year) {
+  
+fields = c(
+  "Population",
+  "Dwellings", 
+  paste0("Pakistan_", year),
+  paste0("India_", year),
+  paste0("Bangladesh_", year),
+  paste0("SriLanka_", year),
+  paste0("mhinc_", year),
+  paste0("bachplus_", year)
+)
+
+
+
+cw$ctuid_s = as.character(cw$ctuid_s)
+cw$ctuid_t = as.character(cw$ctuid_t)
+
+merge_cw_df = inner_join(cw, df, by = c("ctuid_s" = "GeoUID"))
+
+output_fields = list()
+
+for (fel in fields) {
+  wf = paste0("w_",fel)
+  merge_cw_df[wf] = merge_cw_df["w"] * merge_cw_df[fel]
+  output_fields = append(output_fields, wf)
+}
+
+d1 = merge_cw_df |> 
+  group_by(ctuid_t) |> 
+  summarise_if(
+    is.numeric,
+    sum)
+
+output_fields = append(output_fields, "ctuid_t")
+output_c = unlist(output_fields)
+
+output_data = d1[,output_c] |> 
+  rename(GeoUID = ctuid_t)
+
+return(output_data)
+
+}
+
+i_census96 = apportion(read.csv("./data/cw_96_to_16_ct.csv"), 
+             census96,
+             "1996")
+
+i_census01 = apportion(read.csv("./data/cw_01_to_16_ct.csv"), 
+             census01,
+             "2001")
+
+i_census06 = apportion(read.csv("./data/cw_06_to_16_ct.csv"), 
+             census06,
+             "2006")
+
+i_census16 = census16 |> 
+  rename(w_Pakistan_2016 = Pakistan_2016,
+         w_India_2016 = India_2016,
+         w_Bangladesh_2016 = Bangladesh_2016,
+         w_SriLanka_2016 = SriLanka_2016,
+         w_Population = Population,
+         w_mhinc_2016 = mhinc_2016,
+         w_bachplus_2016 = bachplus_2016)
+```
+
+```{r}
+#| label: create immigration percentage variables
+
+imm_vars = function(df_test, year) {
+  
+fields = c(
+  paste0("w_Pakistan_", year),
+  paste0("w_India_", year),
+  paste0("w_Bangladesh_", year),
+  paste0("w_SriLanka_", year),
+  paste0("w_bachplus_", year)
+)
+
+df_test[paste0("w_PakistanPerc_", year)] = (df_test[[fields[1]]]/df_test[["w_Population"]])*100
+
+df_test[paste0("w_IndiaPerc_", year)] = (df_test[[fields[2]]]/df_test[["w_Population"]])*100
+
+df_test[paste0("w_BangladeshPerc_", year)] = (df_test[[fields[3]]]/df_test[["w_Population"]])*100
+
+df_test[paste0("w_SriLankaPerc_", year)] = (df_test[[fields[4]]]/df_test[["w_Population"]])*100
+
+df_test[paste0("w_bachplusPerc_", year)] = (df_test[[fields[5]]]/df_test[["w_Population"]])*100
+
+
+return(df_test)
+}
+
+w_census96 = imm_vars(i_census96,
+             "1996")
+
+w_census01 = imm_vars(i_census01,
+             "2001")
+
+w_census06 = imm_vars(i_census06,
+             "2006")
+
+w_census16 = imm_vars(i_census16,
+             "2016")
+```
+
+```{r}
+#| label: create one demographic dataframe
+
+df = left_join(w_census16, w_census96, by = "GeoUID") |> 
+  left_join(w_census01, by = "GeoUID") |> 
+  left_join(w_census06, by = "GeoUID") |> 
+  select(GeoUID,
+         w_Bangladesh_2016, w_Pakistan_2016, w_SriLanka_2016, w_India_2016,
+         w_BangladeshPerc_2016, w_PakistanPerc_2016, w_SriLankaPerc_2016,
+         w_IndiaPerc_2016, w_mhinc_2016, w_bachplusPerc_2016,
+
+         w_Bangladesh_2006, w_Pakistan_2006, w_SriLanka_2006, w_India_2006,
+         w_BangladeshPerc_2006, w_PakistanPerc_2006, w_SriLankaPerc_2006,
+         w_IndiaPerc_2006,w_mhinc_2006, w_bachplusPerc_2006,
+
+         w_Bangladesh_2001, w_Pakistan_2001, w_SriLanka_2001, w_India_2001,
+         w_BangladeshPerc_2001, w_PakistanPerc_2001, w_SriLankaPerc_2001,
+         w_mhinc_2001, w_bachplusPerc_2001, w_IndiaPerc_2001,
+
+         w_Bangladesh_1996, w_Pakistan_1996, w_SriLanka_1996, w_India_1996,
+         w_BangladeshPerc_1996, w_PakistanPerc_1996, w_SriLankaPerc_1996,
+         w_mhinc_1996, w_bachplusPerc_1996, w_IndiaPerc_1996)
+```
+
+```{r}
+#| label: clean up col names
+
+names(df) = sub('^w_', '', names(df))
+
+new_order = sort(colnames(df))
+df = df[, new_order]
+```
+
+```{r}
+#| label: define geometry for study area
+
+scarbo = st_read("./data/toronto_muni.gpkg") |> 
+  st_transform(crs = 'ESRI:102010') |> # project to nad 1983 zone 17n 
+  filter(area_name == "SCARBOROUGH")
+
+markham = get_census(
+  dataset = 'CA21', 
+  regions = list(CSD = c("3519036")),
+  level = 'CT',
+  use_cache = TRUE,
+  geo_format = 'sf') |> 
+  st_transform(crs = 'ESRI:102010') |>  # project to nad 1983 zone 17n
+  st_union() |> 
+  st_as_sf() |> 
+  mutate(area_name = "MARKHAM") |> 
+  rename(geom = x)
+
+area = bind_rows(list(scarbo, markham))
+```
+
+```{r}
+#| label: spatial filter and clean up study area geometry
+
+df = st_filter(df, area, .predicate = st_intersects) |> 
+  filter(!GeoUID %in% c('5350021.00', '5350022.00', '5350079.00',
+                        '5350180.00', '5350080.02', '5350190.01',
+                        '5350190.02', '5350191.00', '5350261.00',
+                        '5350262.01', '5350262.02', '5350271.01',
+                        '5350271.02', '5350270.01', '5350272.02',
+                        '5350301.04', '5350302.01', '5350302.02',
+                        '5350302.03', '5350324.03', '5350324.03',
+                        '5350324.03', '5350272.01',
+                        '5350321.01', '5350323.02', '5350324.05',
+                        '5350324.06'))
+```
+
+```{r}
+#| label: interpolate NA values in demographic data using linear method
+
+df = df |> 
+  mutate(Bangladesh_1996 = na_interpolation(df$Bangladesh_1996),
+         Bangladesh_2001 = na_interpolation(df$Bangladesh_2001),
+         Bangladesh_2006 = na_interpolation(df$Bangladesh_2006),
+         Bangladesh_2016 = na_interpolation(df$Bangladesh_2016),
+
+         India_1996 = na_interpolation(df$India_1996),
+         India_2001 = na_interpolation(df$India_2001),
+         India_2006 = na_interpolation(df$India_2006),
+         India_2016 = na_interpolation(df$India_2016),
+
+         Pakistan_1996 = na_interpolation(df$Pakistan_1996),
+         Pakistan_2001 = na_interpolation(df$Pakistan_2001),
+         Pakistan_2006 = na_interpolation(df$Pakistan_2006),
+         Pakistan_2016 = na_interpolation(df$Pakistan_2016),
+
+         SriLanka_1996 = na_interpolation(df$SriLanka_1996),
+         SriLanka_2001 = na_interpolation(df$SriLanka_2001),
+         SriLanka_2006 = na_interpolation(df$SriLanka_2006),
+         SriLanka_2016 = na_interpolation(df$SriLanka_2016),
+
+         BangladeshPerc_1996 = na_interpolation(df$BangladeshPerc_1996),
+         BangladeshPerc_2001 = na_interpolation(df$BangladeshPerc_2001),
+         BangladeshPerc_2006 = na_interpolation(df$BangladeshPerc_2006),
+         BangladeshPerc_2016 = na_interpolation(df$BangladeshPerc_2016),
+
+         IndiaPerc_1996 = na_interpolation(df$IndiaPerc_1996),
+         IndiaPerc_2001 = na_interpolation(df$IndiaPerc_2001),
+         IndiaPerc_2006 = na_interpolation(df$IndiaPerc_2006),
+         IndiaPerc_2016 = na_interpolation(df$IndiaPerc_2016),
+
+         PakistanPerc_1996 = na_interpolation(df$PakistanPerc_1996),
+         PakistanPerc_2001 = na_interpolation(df$PakistanPerc_2001),
+         PakistanPerc_2006 = na_interpolation(df$PakistanPerc_2006),
+         PakistanPerc_2016 = na_interpolation(df$PakistanPerc_2016),
+         
+         SriLankaPerc_1996 = na_interpolation(df$SriLankaPerc_1996),
+         SriLankaPerc_2001 = na_interpolation(df$SriLankaPerc_2001),
+         SriLankaPerc_2006 = na_interpolation(df$SriLankaPerc_2006),
+         SriLankaPerc_2016 = na_interpolation(df$SriLankaPerc_2016),
+
+         mhinc_1996 = na_interpolation(df$mhinc_1996),
+         mhinc_2001 = na_interpolation(df$mhinc_2001),
+         mhinc_2006 = na_interpolation(df$mhinc_2006),
+         mhinc_2016 = na_interpolation(df$mhinc_2016),
+         
+
+         bachplusPerc_1996 = na_interpolation(df$bachplusPerc_1996),
+         bachplusPerc_2001 = na_interpolation(df$bachplusPerc_2001),
+         bachplusPerc_2006 = na_interpolation(df$bachplusPerc_2006),
+         bachplusPerc_2016 = na_interpolation(df$bachplusPerc_2016))
+```
+
+```{r}
+#| label: create census tract neighbors & weights
+
+nb_queen = sfdep::st_contiguity(df, queen = TRUE)
+
+queen_W = sfdep::st_weights(
+  nb = nb_queen, 
+  style = "W")
+
+df = df |>
+  mutate(nb = nb_queen,
+         wt = queen_W)
+```
+
+```{r}
+#| label: visualize queen contiguity neighbors
+plot.new()
+plot(st_geometry(area), border = "black")
+plot(st_geometry(df_spat), border = "darkgray", add = T)
+plot.nb(spdep::poly2nb(df_spat, queen = TRUE), st_geometry(df_spat), lwd=.2, col="#0892A5", cex = .5, add = TRUE)
+```
+
+```{r}
+#| label: create study area map
+
+tm_shape(area) + tm_fill(col = "#381034") +
+  tm_shape(df) + tm_polygons(col = "#E7BEEF", border.col = "#381034") +
+  tm_shape(area) + tm_borders(col = "#381034") +
+  tm_text("area_name", remove.overlap = TRUE,size= 0.7, col = "black", bg.color= 'white', bg.alpha = 0.7) +
+  tm_compass(position = c("left", "bottom")) + 
+  tm_scale_bar(position = c("left", "bottom")) +
+  tm_shape(scarbo) + tm_borders(lwd = 2, col = "#381034")+
+  tm_shape(markham) + tm_borders(lwd = 2, col = "#381034")
+```
+
+## Retailer Data
+
+```{r}
+#| label: read yellow pages retailer data
+
+foodenv = st_read("./data/spatial_YP.geojson") |> 
+  st_transform(crs = 'ESRI:102010') # project to nad 1983 zone 17n 
+```
+
+```{r}
+#| label: filter retailers to study area
+
+fdf = st_filter(foodenv, df, .predicate = st_intersects)
+```
+
+```{r}
+#| label: create retailers map
+
+tm_shape(area) + tm_fill(col = "#381034") +
+  tm_shape(df) + tm_polygons(col = "#E7BEEF", border.col = "#381034") +
+  tm_shape(area) + tm_borders(col = "#381034") +
+  tm_shape(foodenv |> st_buffer(1000)) + tm_polygons(col = "#381034", alpha = 0.01, border.alpha = 0.01) +
+  tm_shape(foodenv) + tm_dots(col = "#381034", size = 0.01) +
+  tm_shape(fdf) + tm_dots(col = "white", size = 0.02) +
+  tm_compass(position = c("left", "bottom")) + 
+  tm_scale_bar(position = c("left", "bottom"))
+```
+
+```{r}
+#| label: add number of retailers within 1 km variables to dataframe for relevant retailer classifications
+
+df_spat = df |> 
+  mutate(ret_all_ethnic = lengths(st_intersects(df$geometry, filter(foodenv, cuisine != 'not south asian') |> st_buffer(1000))), #ethinc retailers
+         
+         ret_all = lengths(st_intersects(df$geometry, foodenv|> st_buffer(1000))), #all retailers
+         
+         ret_in = lengths(st_intersects(df$geometry, filter(foodenv, cuisine == 'indian')|> st_buffer(1000))), #indian retailers
+         
+         ret_pk = lengths(st_intersects(df$geometry, filter(foodenv, cuisine == 'pakistani')|> st_buffer(1000))), #pakistani retailers
+         
+         ret_sl = lengths(st_intersects(df$geometry, filter(foodenv, cuisine == 'sri lankan')|> st_buffer(1000))), #sri lankan retailers
+         
+         ret_bd = lengths(st_intersects(df$geometry, filter(foodenv, cuisine == 'bangladeshi')|> st_buffer(1000))), #bangladeshi retailers
+         
+         ret_all_sa = lengths(st_intersects(df$geometry, filter(foodenv, cuisine != 'not south asian' & cuisine != 'ethnic')|> st_buffer(1000))), #south asian retailers
+         
+         #all classifications for 1996
+         ret_all_ethnic1996 = lengths(st_intersects(df$geometry, filter(foodenv, cuisine != 'not south asian' & year == '1996') |> st_buffer(1000))),
+         ret_all_sa1996 = lengths(st_intersects(df$geometry, filter(foodenv, cuisine != 'not south asian' & cuisine != 'ethnic'& year == '1996')|> st_buffer(1000))),
+          ret_all_in1996 = lengths(st_intersects(df$geometry, filter(foodenv, cuisine == 'indian' & year == '1996')|> st_buffer(1000))),
+         ret_all_pk1996 = lengths(st_intersects(df$geometry, filter(foodenv, cuisine == 'pakistani' & year == '1996')|> st_buffer(1000))),
+         ret_all_bd1996 = lengths(st_intersects(df$geometry, filter(foodenv, cuisine == 'bangladeshi' & year == '1996')|> st_buffer(1000))),
+         ret_all_sl1996 = lengths(st_intersects(df$geometry, filter(foodenv, cuisine == 'sri lankan' & year == '1996')|> st_buffer(1000))),
+          
+         #all classifications for 2001
+         ret_all_ethnic2001 = lengths(st_intersects(df$geometry, filter(foodenv, cuisine != 'not south asian' & year == '2001') |> st_buffer(1000))),
+         ret_all_sa2001 = lengths(st_intersects(df$geometry, filter(foodenv, cuisine != 'not south asian' & cuisine != 'ethnic'& year == '2001')|> st_buffer(1000))),
+         ret_all_in2001 = lengths(st_intersects(df$geometry, filter(foodenv, cuisine == 'indian' & year == '2001')|> st_buffer(1000))),
+         ret_all_pk2001 = lengths(st_intersects(df$geometry, filter(foodenv, cuisine == 'pakistani' & year == '2001')|> st_buffer(1000))),
+         ret_all_bd2001 = lengths(st_intersects(df$geometry, filter(foodenv, cuisine == 'bangladeshi' & year == '2001')|> st_buffer(1000))),
+         ret_all_sl2001 = lengths(st_intersects(df$geometry, filter(foodenv, cuisine == 'sri lankan' & year == '2001')|> st_buffer(1000))),
+         
+         #all classifications for 2006
+         ret_all_ethnic2006 = lengths(st_intersects(df$geometry, filter(foodenv, cuisine != 'not south asian' & year == '2006') |> st_buffer(1000))),
+         ret_all_sa2006 = lengths(st_intersects(df$geometry, filter(foodenv, cuisine != 'not south asian' & cuisine != 'ethnic'& year == '2006')|> st_buffer(1000))),
+         ret_all_in2006 = lengths(st_intersects(df$geometry, filter(foodenv, cuisine == 'indian' & year == '2006')|> st_buffer(1000))),
+         ret_all_pk2006 = lengths(st_intersects(df$geometry, filter(foodenv, cuisine == 'pakistani' & year == '2006')|> st_buffer(1000))),
+         ret_all_bd2006 = lengths(st_intersects(df$geometry, filter(foodenv, cuisine == 'bangladeshi' & year == '2006')|> st_buffer(1000))),
+         ret_all_sl2006 = lengths(st_intersects(df$geometry, filter(foodenv, cuisine == 'sri lankan' & year == '2006')|> st_buffer(1000))),
+         
+         #all classifications for 2016
+         ret_all_ethnic2016 = lengths(st_intersects(df$geometry, filter(foodenv, cuisine != 'not south asian' & year == '2016') |> st_buffer(1000))),
+         ret_all_sa2016 = lengths(st_intersects(df$geometry, filter(foodenv, cuisine != 'not south asian' & cuisine != 'ethnic'& year == '2016')|> st_buffer(1000))),
+         ret_all_in2016 = lengths(st_intersects(df$geometry, filter(foodenv, cuisine == 'indian' & year == '2016')|> st_buffer(1000))),
+         ret_all_pk2016 = lengths(st_intersects(df$geometry, filter(foodenv, cuisine == 'pakistani' & year == '2016')|> st_buffer(1000))),
+         ret_all_bd2016 = lengths(st_intersects(df$geometry, filter(foodenv, cuisine == 'bangladeshi' & year == '2016')|> st_buffer(1000))),
+         ret_all_sl2016 = lengths(st_intersects(df$geometry, filter(foodenv, cuisine == 'sri lankan' & year == '2016')|> st_buffer(1000)))
+         )
+```
+
+```{r}
+#| label: make long format dataframe
+
+df_spat =  df_spat |> 
+  mutate(sa_1996 = Bangladesh_1996 + India_1996 + Pakistan_1996 + SriLanka_1996,
+         sa_2001 = Bangladesh_2001 + India_2001 + Pakistan_2001 + SriLanka_2001,
+         sa_2006 = Bangladesh_2006 + India_2006 + Pakistan_2006 + SriLanka_2006,
+         sa_2016 = Bangladesh_2016 + India_2016 + Pakistan_2016 + SriLanka_2016)
+
+# make a long df
+longdf = function(string){
+df_temp = df_spat |> 
+  st_drop_geometry() |> 
+  pivot_longer(
+    cols = starts_with(string),
+    names_to = "year",
+    names_prefix = string,
+    values_to = "count"
+  ) |> 
+  select(year, count, GeoUID)
+
+return(df_temp)
+}
+
+dflong1 = longdf('BangladeshPerc_')  |> rename(BangladeshPerc = count)
+dflong2 = longdf('IndiaPerc_') |> rename(IndiaPerc = count)
+dflong3 = longdf('mhinc_') |> rename(mhinc = count)
+dflong4 = longdf('PakistanPerc_') |> rename(PakistanPerc = count)
+dflong5 = longdf('SriLankaPerc_') |> rename(SriLankaPerc = count)
+dflong6 = longdf('bachplusPerc_') |> rename(bachplusPerc = count)
+dflong7 = longdf('ret_all_ethnic') |> rename(ret_all_ethnic = count)
+dflong8 = longdf('ret_all_sa') |> rename(ret_all_sa = count)
+dflong9 = longdf('sa_') |> rename(saTotal = count)
+
+dflong_temp1 = left_join(dflong1, dflong2,  by = c("GeoUID", "year"))
+dflong_temp2 = left_join(dflong_temp1 , dflong3,by = c("GeoUID", "year"))
+dflong_temp3 = left_join(dflong_temp2 , dflong4, by = c("GeoUID", "year"))
+dflong_temp4 = left_join(dflong_temp3 , dflong5, by = c("GeoUID", "year"))
+dflong_temp5 = left_join(dflong_temp4 , dflong6, by = c("GeoUID", "year"))
+dflong_temp6 = left_join(dflong_temp5 , dflong7, by = c("GeoUID", "year"))
+dflong_temp7 = left_join(dflong_temp6 , dflong8, by = c("GeoUID", "year"))
+df_long = left_join(dflong_temp7 , dflong9, by = c("GeoUID", "year"))
+```
+
+# Descriptive Statistics
+
+```{r}
+#| label: descriptive statistics table
+datasummary_skim(df_spat, output = "dataframe")
+```
+
+```{r}
+#| label: correlation matrix for socioeconomic vars
+
+plot_correlation(df |> select(mhinc_1996, mhinc_2001, mhinc_2006, mhinc_2016,
+                              bachplusPerc_1996, bachplusPerc_2001, bachplusPerc_2006, bachplusPerc_2016))
+```
+
+```{r}
+#| label: correlation matrix for immigrant and income vars
+
+plot_correlation(df |> select(mhinc_1996, mhinc_2001, mhinc_2006, mhinc_2016,
+                              IndiaPerc_1996, IndiaPerc_2001, IndiaPerc_2006, IndiaPerc_2016, PakistanPerc_1996, PakistanPerc_2001, PakistanPerc_2006, PakistanPerc_2016, SriLankaPerc_1996, SriLankaPerc_2001, SriLankaPerc_2006, SriLankaPerc_2016, BangladeshPerc_1996, BangladeshPerc_2001, BangladeshPerc_2006, BangladeshPerc_2016))
+```
+
+```{r}
+#| label: correlation matrix for immigrant and education vars
+
+plot_correlation(df |> select(bachplusPerc_1996, bachplusPerc_2001, bachplusPerc_2006, bachplusPerc_2016,
+                              IndiaPerc_1996, IndiaPerc_2001, IndiaPerc_2006, IndiaPerc_2016, PakistanPerc_1996, PakistanPerc_2001, PakistanPerc_2006, PakistanPerc_2016, SriLankaPerc_1996, SriLankaPerc_2001, SriLankaPerc_2006, SriLankaPerc_2016, BangladeshPerc_1996, BangladeshPerc_2001, BangladeshPerc_2006, BangladeshPerc_2016))
+```
+
+```{r}
+#| label: create plot for immigrants and retailers over time
+#create color pal
+cvi_colours = list(
+  cvi_sa = c("#F3B61F", "#D52941", "#62929E", "#9BE564"),
+  cvi_ret = c("#EFBDEB", "#453993")
+)
+
+cvi_palettes = function(name, n, all_palettes = cvi_colours, type = c("discrete", "continuous")) {
+  palette = all_palettes[[name]]
+  if (missing(n)) {
+    n = length(palette)
+  }
+  type = match.arg(type)
+  out = switch(type,
+               continuous = grDevices::colorRampPalette(palette)(n),
+               discrete = palette[1:n]
+  )
+  structure(out, name = name, class = "palette")
+}
+scale_colour_cvi_d = function(name) {
+  ggplot2::scale_colour_manual(values = cvi_palettes(name,
+                                                    type = "discrete"))
+}
+
+scale_colour_cvi_d("cvi_sa")
+
+#reformat data for plot
+
+df_Long1 = df_spat |> pivot_longer(cols=c("Bangladesh_1996"  , "Bangladesh_2001"  ,"Bangladesh_2006"  ,   "Bangladesh_2016", "India_1996" ,         "India_2001" ,"India_2006"  ,        "India_2016", "Pakistan_1996" ,      "Pakistan_2001"   ,   
+ "Pakistan_2006"    ,   "Pakistan_2016", "SriLanka_1996"   ,    "SriLanka_2001"  ,    
+ "SriLanka_2006"  ,     "SriLanka_2016"),
+                    names_to='var',
+                    values_to='count') |> 
+  st_drop_geometry() |> 
+  select('var', 'count', 'GeoUID')
+
+
+df_Long1 = df_Long1 |> 
+  mutate(year = substr(var, nchar(var)-4+1, nchar(var)),
+         var = substr(df_Long1$var, 1, nchar(df_Long1$var)-5)) 
+
+
+df_Long1$var[df_Long1$var == 'Bangladesh'] = 'Bangladeshi Immigrants'
+df_Long1$var[df_Long1$var == 'India'] = 'Indian Immigrants'
+df_Long1$var[df_Long1$var == 'Pakistan'] = 'Pakistani Immigrants'
+df_Long1$var[df_Long1$var == 'SriLanka'] = 'Sri Lankan Immigrants'
+
+df_vizret = df_spat |> pivot_longer(cols=c("ret_all_ethnic1996" ,
+"ret_all_sa1996"   ,   "ret_all_ethnic2001" , "ret_all_sa2001",      "ret_all_ethnic2006", 
+"ret_all_sa2006"  ,    "ret_all_ethnic2016" , "ret_all_sa2016",
+'ret_all_in1996', 'ret_all_in2001', 'ret_all_in2006', 'ret_all_in2016',
+'ret_all_pk1996', 'ret_all_pk2001', 'ret_all_pk2006', 'ret_all_pk2016',
+'ret_all_bd1996', 'ret_all_bd2001', 'ret_all_bd2006', 'ret_all_bd2016',
+'ret_all_sl1996', 'ret_all_sl2001', 'ret_all_sl2006', 'ret_all_sl2016',),
+                    names_to='var',
+                    values_to='count') |> 
+  st_drop_geometry() |> 
+  select('var', 'count')
+
+
+df_vizret = df_vizret |> 
+  mutate(year = substr(var, nchar(var)-4+1, nchar(var)),
+         var = substr(var, nchar(var)-10, nchar(var)-4))
+
+df_vizret$var[df_vizret$var == '_ethnic'] = 'Ethnic Retailers'
+df_vizret$var[df_vizret$var == '_all_sa'] = 'South Asian Retailers'
+df_vizret$var[df_vizret$var == '_all_in'] = 'Indian Retailers'
+df_vizret$var[df_vizret$var == '_all_pk'] = 'Pakistani Retailers'
+df_vizret$var[df_vizret$var == '_all_bd'] = 'Bangladeshi Retailers'
+df_vizret$var[df_vizret$var == '_all_sl'] = 'Sri Lankan Retailers'
+
+df_vizLong = aggregate(df_Long1$count, by=list(year=df_Long1$year, var=df_Long1$var), FUN=sum) |> 
+  rename(count = x, type = var) 
+
+df_vizret = aggregate(df_vizret$count, by=list(year=df_vizret$year, var=df_vizret$var), FUN=sum) |> 
+  rename(count = x, type = var)
+
+#make plot
+p1 = ggplot(df_vizLong, aes(x=year, y=count, group=type)) + 
+     geom_line(colour="grey70") + 
+     geom_point(aes(colour=type), size=4) + 
+  scale_colour_cvi_d("cvi_sa") +
+   theme(legend.title=element_blank())+ 
+  theme_minimal()+
+  scale_y_continuous(label=comma)
+
+p3 = ggplot(df_vizret |> filter(type == 'Ethnic Retailers' | 
+                                  type == 'South Asian Retailers'), 
+            aes(x=year, y=count, group=type)) + 
+     geom_line(colour="grey70") + 
+     geom_point(aes(colour=type), size=4)+ 
+  scale_colour_cvi_d("cvi_ret") +
+   theme(legend.title=element_blank()) + 
+  theme_minimal()+
+  scale_y_continuous(label=comma)
+
+p2 = ggplot(df_vizret |> filter(type == 'Indian Retailers' | 
+                                  type == 'Pakistani Retailers' | 
+                                  type == 'Bangladeshi Retailers'| 
+                                  type == 'Sri Lankan Retailers')
+            , aes(x=year, y=count, group=type)) + 
+     geom_line(colour="grey70") + 
+     geom_point(aes(colour=type), size=4)+ 
+  scale_colour_cvi_d("cvi_sa")+
+   theme(legend.title=element_blank()) + 
+  theme_minimal() +
+  scale_y_continuous(label=comma)
+
+ggarrange(p1,p2, p3, ncol=1)
+```
+
+# Analysis
+
+## Moran's I
+```{r}
+#| label: calculate Moran's I for all immigrant groups for all years
+
+SL96_GMoran = sfdep::global_moran_test(
+  x = df |> pull(SriLanka_1996),
+  nb = nb_queen,
+  wt = queen_W)
+SL01_GMoran = sfdep::global_moran_test(
+  x = df |> pull(SriLanka_2001),
+  nb = nb_queen,
+  wt = queen_W)
+SL06_GMoran = sfdep::global_moran_test(
+  x = df |> pull(SriLanka_2006),
+  nb = nb_queen,
+  wt = queen_W)
+SL16_GMoran = sfdep::global_moran_test(
+  x = df |> pull(SriLanka_2016),
+  nb = nb_queen,
+  wt = queen_W)
+
+IN96_GMoran = sfdep::global_moran_test(
+  x = df |> pull(India_1996),
+  nb = nb_queen,
+  wt = queen_W)
+IN01_GMoran = sfdep::global_moran_test(
+  x = df |> pull(India_2001),
+  nb = nb_queen,
+  wt = queen_W)
+IN06_GMoran = sfdep::global_moran_test(
+  x = df |> pull(India_2006),
+  nb = nb_queen,
+  wt = queen_W)
+IN16_GMoran = sfdep::global_moran_test(
+  x = df |> pull(India_2016),
+  nb = nb_queen,
+  wt = queen_W)
+
+
+PK96_GMoran = sfdep::global_moran_test(
+  x = df |> pull(Pakistan_1996),
+  nb = nb_queen,
+  wt = queen_W)
+PK01_GMoran = sfdep::global_moran_test(
+  x = df |> pull(Pakistan_2001),
+  nb = nb_queen,
+  wt = queen_W)
+PK06_GMoran = sfdep::global_moran_test(
+  x = df |> pull(Pakistan_2006),
+  nb = nb_queen,
+  wt = queen_W)
+PK16_GMoran = sfdep::global_moran_test(
+  x = df |> pull(Pakistan_2016),
+  nb = nb_queen,
+  wt = queen_W)
+
+BA96_GMoran = sfdep::global_moran_test(
+  x = df |> pull(Bangladesh_1996),
+  nb = nb_queen,
+  wt = queen_W)
+BA01_GMoran = sfdep::global_moran_test(
+  x = df |> pull(Bangladesh_2001),
+  nb = nb_queen,
+  wt = queen_W)
+BA06_GMoran = sfdep::global_moran_test(
+  x = df |> pull(Bangladesh_2006),
+  nb = nb_queen,
+  wt = queen_W)
+BA16_GMoran = sfdep::global_moran_test(
+  x = df |> pull(Bangladesh_2016),
+  nb = nb_queen,
+  wt = queen_W)
+
+# make a plot to compare Moran's I results
+
+tabSL = data.frame(matrix(NA, ncol=2, nrow = 4))
+colnames(tabSL) <- c("Moran's I", 'p-value')
+rownames(tabSL) = c("Sri Lanka 1996", 
+                  "Sri Lanka 2001", 
+                  "Sri Lanka 2006",
+                  "Sri Lanka 2016")
+tabSL[1,1] = round(SL96_GMoran$estimate |> pluck("Moran I statistic"),2) |> 
+  format(nsmall = 2)
+tabSL[2,1] = round(SL01_GMoran$estimate |> pluck("Moran I statistic"),2)
+tabSL[3,1] = round(SL06_GMoran$estimate |> pluck("Moran I statistic"), 2)
+tabSL[4,1] = round(SL16_GMoran$estimate |> pluck("Moran I statistic"), 2)
+tabSL[1,2] = format(SL96_GMoran$p.value, digits = 3) 
+tabSL[2,2] = format(SL01_GMoran$p.value, digits = 3)
+tabSL[3,2] = format(SL06_GMoran$p.value, digits = 3)
+tabSL[4,2] = format(SL16_GMoran$p.value, digits = 3)
+
+tabIN = data.frame(matrix(NA, ncol=2, nrow = 4))
+colnames(tabIN) <- c("Moran's I", 'p-value')
+rownames(tabIN) = c("India 1996", 
+                  "India 2001", 
+                  "India 2006",
+                  "India 2016")
+tabIN[1,1] = round(IN96_GMoran$estimate |> pluck("Moran I statistic"),2) |> 
+  format(nsmall = 2)
+tabIN[2,1] = round(IN01_GMoran$estimate |> pluck("Moran I statistic"),2)
+tabIN[3,1] = round(IN06_GMoran$estimate |> pluck("Moran I statistic"), 2)
+tabIN[4,1] = round(IN16_GMoran$estimate |> pluck("Moran I statistic"), 2)
+tabIN[1,2] = format(IN96_GMoran$p.value, digits = 3) 
+tabIN[2,2] = format(IN01_GMoran$p.value, digits = 3)
+tabIN[3,2] = format(IN06_GMoran$p.value, digits = 3)
+tabIN[4,2] = format(IN16_GMoran$p.value, digits = 3)
+
+tabPK = data.frame(matrix(NA, ncol=2, nrow = 4))
+colnames(tabPK) <- c("Moran's I", 'p-value')
+rownames(tabPK) = c("Pakistan 1996", 
+                  "Pakistan 2001", 
+                  "Pakistan 2006", 
+                  "Pakistan 2016")
+tabPK[1,1] = round(PK96_GMoran$estimate |> pluck("Moran I statistic"),2) |> 
+  format(nsmall = 2)
+tabPK[2,1] = round(PK01_GMoran$estimate |> pluck("Moran I statistic"),2)
+tabPK[3,1] = round(PK06_GMoran$estimate |> pluck("Moran I statistic"), 2)
+tabPK[4,1] = round(PK16_GMoran$estimate |> pluck("Moran I statistic"), 2)
+tabPK[1,2] = format(PK96_GMoran$p.value, digits = 3) 
+tabPK[2,2] = format(PK01_GMoran$p.value, digits = 3)
+tabPK[3,2] = format(PK06_GMoran$p.value, digits = 3)
+tabPK[4,2] = format(PK16_GMoran$p.value, digits = 3)
+
+tabBD = data.frame(matrix(NA, ncol=2, nrow = 4))
+colnames(tabBD) <- c("Moran's I", 'p-value')
+rownames(tabBD) = c("Bangladesh 1996", 
+                  "Bangladesh 2001", 
+                  "Bangladesh 2006", 
+                  "Bangladesh 2016")
+tabBD[1,1] = round(BA96_GMoran$estimate |> pluck("Moran I statistic"),2) |> 
+  format(nsmall = 2)
+tabBD[2,1] = round(BA01_GMoran$estimate |> pluck("Moran I statistic"),2)
+tabBD[3,1] = round(BA06_GMoran$estimate |> pluck("Moran I statistic"), 2)
+tabBD[4,1] = round(BA16_GMoran$estimate |> pluck("Moran I statistic"), 2)
+tabBD[1,2] = format(BA96_GMoran$p.value, digits = 3) 
+tabBD[2,2] = format(BA01_GMoran$p.value, digits = 3)
+tabBD[3,2] = format(BA06_GMoran$p.value, digits = 3)
+tabBD[4,2] = format(BA16_GMoran$p.value, digits = 3)
+
+table_morans1 = rownames_to_column(rbind(tabSL, tabIN, tabPK, tabBD)) 
+table_morans1  = table_morans1 |> 
+  mutate(year = substr(rowname, nchar(rowname)-4+1, nchar(rowname)),
+         country = substr(table_morans1$rowname, 1, nchar(table_morans1$rowname)-5)) |> 
+  rename(mi = "Moran's I")
+
+table_morans1$mi <- as.numeric(table_morans1$mi)
+
+dem_mi_plot = ggplot(table_morans1, aes(x = year, y = mi)) +
+  geom_col(fill = '#7c238c') + 
+  ggtitle("South Asian Immigrant Clustering by Year") + 
+  facet_wrap(country~.) + 
+  theme_minimal() + 
+  ylab("Moran's I Coefficient") + 
+  scale_y_continuous(n.breaks=5)
+
+dem_mi_plot
+```
+
+```{r}
+#| label: calculate retailer moran's i for all years and all relevant categories
+
+ER96_GMoran = sfdep::global_moran_test(
+  x = df_spat |> pull(ret_all_ethnic1996),
+  nb = nb_queen,
+  wt = queen_W)
+ER01_GMoran = sfdep::global_moran_test(
+  x = df_spat |> pull(ret_all_ethnic2001),
+  nb = nb_queen,
+  wt = queen_W)
+ER06_GMoran = sfdep::global_moran_test(
+  x = df_spat |> pull(ret_all_ethnic2006),
+  nb = nb_queen,
+  wt = queen_W)
+ER16_GMoran = sfdep::global_moran_test(
+  x = df_spat |> pull(ret_all_ethnic2016),
+  nb = nb_queen,
+  wt = queen_W)
+
+#make a table
+tab = data.frame(matrix(NA, ncol=2, nrow = 4))
+colnames(tab) = c("Moran's I", 'p-value')
+rownames(tab) = c("Ethnic Retailers 1996", 
+                  "Ethnic Retailers 2001", 
+                  "Ethnic Retailers 2006",
+                  "Ethnic Retailers 2016")
+#[row, col]
+tab[1,1] = round(ER96_GMoran$estimate |> pluck("Moran I statistic"),2) |> 
+  format(nsmall = 2)
+tab[2,1] = round(ER01_GMoran$estimate |> pluck("Moran I statistic"),2)
+tab[3,1] = round(ER06_GMoran$estimate |> pluck("Moran I statistic"), 2)
+tab[4,1] = round(ER16_GMoran$estimate |> pluck("Moran I statistic"), 2)
+
+tab[1,2] = format(ER96_GMoran$p.value, digits = 3) 
+tab[2,2] = format(ER01_GMoran$p.value, digits = 3)
+tab[3,2] = format(ER06_GMoran$p.value, digits = 3)
+tab[4,2] = format(ER16_GMoran$p.value, digits = 3)
+
+tabER = tab #all values are sig
+
+
+ESA96_GMoran = sfdep::global_moran_test(
+  x = df_spat |> pull(ret_all_sa1996),
+  nb = nb_queen,
+  wt = queen_W)
+ESA01_GMoran = sfdep::global_moran_test(
+  x = df_spat |> pull(ret_all_sa2001),
+  nb = nb_queen,
+  wt = queen_W)
+ESA06_GMoran = sfdep::global_moran_test(
+  x = df_spat |> pull(ret_all_sa2006),
+  nb = nb_queen,
+  wt = queen_W)
+ESA16_GMoran = sfdep::global_moran_test(
+  x = df_spat |> pull(ret_all_sa2016),
+  nb = nb_queen,
+  wt = queen_W)
+
+#make a table
+tab = data.frame(matrix(NA, ncol=2, nrow = 4))
+colnames(tab) = c("Moran's I", 'p-value')
+rownames(tab) = c("South Asian Retailers 1996", 
+                  "South Asian Retailers 2001", 
+                  "South Asian Retailers 2006",
+                  "South Asian Retailers 2016")
+#[row, col]
+tab[1,1] = round(ESA96_GMoran$estimate |> pluck("Moran I statistic"),2) |> 
+  format(nsmall = 2)
+tab[2,1] = round(ESA01_GMoran$estimate |> pluck("Moran I statistic"),2)
+tab[3,1] = round(ESA06_GMoran$estimate |> pluck("Moran I statistic"), 2)
+tab[4,1] = round(ESA16_GMoran$estimate |> pluck("Moran I statistic"), 2)
+
+tab[1,2] = format(ESA96_GMoran$p.value, digits = 3) 
+tab[2,2] = format(ESA01_GMoran$p.value, digits = 3)
+tab[3,2] = format(ESA06_GMoran$p.value, digits = 3)
+tab[4,2] = format(ESA16_GMoran$p.value, digits = 3)
+
+tabSAR = tab
+#all vals are sig
+
+RIN96_GMoran = sfdep::global_moran_test(
+  x = df_spat |> pull(ret_all_in1996),
+  nb = nb_queen,
+  wt = queen_W)
+RIN01_GMoran = sfdep::global_moran_test(
+  x = df_spat |> pull(ret_all_in2001),
+  nb = nb_queen,
+  wt = queen_W)
+RIN06_GMoran = sfdep::global_moran_test(
+  x = df_spat |> pull(ret_all_in2006),
+  nb = nb_queen,
+  wt = queen_W)
+RIN16_GMoran = sfdep::global_moran_test(
+  x = df_spat |> pull(ret_all_in2016),
+  nb = nb_queen,
+  wt = queen_W)
+
+#make a table
+tab = data.frame(matrix(NA, ncol=2, nrow = 4))
+colnames(tab) = c("Moran's I", 'p-value')
+rownames(tab) = c("Indian Retailers 1996", 
+                  "Indian Retailers 2001", 
+                  "Indian Retailers 2006",
+                  "Indian Retailers 2016")
+#[row, col]
+tab[1,1] = round(RIN96_GMoran$estimate |> pluck("Moran I statistic"),2) |> 
+  format(nsmall = 2)
+tab[2,1] = round(RIN01_GMoran$estimate |> pluck("Moran I statistic"),2)
+tab[3,1] = round(RIN06_GMoran$estimate |> pluck("Moran I statistic"), 2)
+tab[4,1] = round(RIN16_GMoran$estimate |> pluck("Moran I statistic"), 2)
+
+tab[1,2] = format(RIN96_GMoran$p.value, digits = 3) 
+tab[2,2] = format(RIN01_GMoran$p.value, digits = 3)
+tab[3,2] = format(RIN06_GMoran$p.value, digits = 3)
+tab[4,2] = format(RIN16_GMoran$p.value, digits = 3)
+
+tabRIN = tab #all vals are sig
+
+RPK01_GMoran = sfdep::global_moran_test(
+  x = df_spat |> pull(ret_all_pk2001),
+  nb = nb_queen,
+  wt = queen_W)
+RPK06_GMoran = sfdep::global_moran_test(
+  x = df_spat |> pull(ret_all_pk2006),
+  nb = nb_queen,
+  wt = queen_W)
+RPK16_GMoran = sfdep::global_moran_test(
+  x = df_spat |> pull(ret_all_pk2016),
+  nb = nb_queen,
+  wt = queen_W)
+
+#make a table
+tab = data.frame(matrix(NA, ncol=2, nrow = 3))
+colnames(tab) = c("Moran's I", 'p-value')
+rownames(tab) = c("Pakistani Retailers 2001", 
+                  "Pakistani Retailers 2006",
+                  "Pakistani Retailers 2016")
+#[row, col]
+tab[1,1] = round(RPK01_GMoran$estimate |> pluck("Moran I statistic"),2)
+tab[2,1] = round(RPK06_GMoran$estimate |> pluck("Moran I statistic"), 2)
+tab[3,1] = round(RPK16_GMoran$estimate |> pluck("Moran I statistic"), 2)
+
+tab[1,2] = format(RPK01_GMoran$p.value, digits = 3)
+tab[2,2] = format(RPK06_GMoran$p.value, digits = 3)
+tab[3,2] = format(RPK16_GMoran$p.value, digits = 3)
+
+tabRPK = tab #all vals are sig
+
+RBD16_GMoran = sfdep::global_moran_test(
+  x = df_spat |> pull(ret_all_bd2016),
+  nb = nb_queen,
+  wt = queen_W)
+
+#make a table
+tab = data.frame(matrix(NA, ncol=2, nrow = 1))
+colnames(tab) = c("Moran's I", 'p-value')
+rownames(tab) = c("Bangladeshi Retailers 2016")
+#[row, col]
+tab[1,1] = round(RPK16_GMoran$estimate |> pluck("Moran I statistic"),2)
+
+tab[1,2] = format(RPK16_GMoran$p.value, digits = 3)
+
+tabRBD = tab #all vals are sig
+
+RSL96_GMoran = sfdep::global_moran_test(
+  x = df_spat |> pull(ret_all_sl1996),
+  nb = nb_queen,
+  wt = queen_W)
+RSL01_GMoran = sfdep::global_moran_test(
+  x = df_spat |> pull(ret_all_sl2001),
+  nb = nb_queen,
+  wt = queen_W)
+RSL06_GMoran = sfdep::global_moran_test(
+  x = df_spat |> pull(ret_all_sl2006),
+  nb = nb_queen,
+  wt = queen_W)
+RSL16_GMoran = sfdep::global_moran_test(
+  x = df_spat |> pull(ret_all_sl2016),
+  nb = nb_queen,
+  wt = queen_W)
+
+#make a table
+tab = data.frame(matrix(NA, ncol=2, nrow = 4))
+colnames(tab) = c("Moran's I", 'p-value')
+rownames(tab) = c("Sri Lankan Retailers 1996", 
+                  "Sri Lankan Retailers 2001", 
+                  "Sri Lankan Retailers 2006",
+                  "Sri Lankan Retailers 2016")
+
+#[row, col]
+tab[1,1] = round(RSL96_GMoran$estimate |> pluck("Moran I statistic"),2) |> 
+  format(nsmall = 2)
+tab[2,1] = round(RSL01_GMoran$estimate |> pluck("Moran I statistic"),2)
+tab[3,1] = round(RSL06_GMoran$estimate |> pluck("Moran I statistic"), 2)
+tab[4,1] = round(RSL16_GMoran$estimate |> pluck("Moran I statistic"), 2)
+
+tab[1,2] = format(RSL96_GMoran$p.value, digits = 3) 
+tab[2,2] = format(RSL01_GMoran$p.value, digits = 3)
+tab[3,2] = format(RSL06_GMoran$p.value, digits = 3)
+tab[4,2] = format(RSL16_GMoran$p.value, digits = 3)
+
+tabRSL = tab #all vals are sig
+
+table_morans2 = rownames_to_column(rbind(tabSAR, tabER, tabRSL, tabRIN, tabRPK, tabRBD)) 
+
+table_morans2  = table_morans2 |> 
+  mutate(year = substr(rowname, nchar(rowname)-4+1, nchar(rowname)),
+         type = substr(rowname, 1, nchar(rowname)-5))|> 
+  rename(mi = "Moran's I")
+
+table_morans2$mi = as.numeric(table_morans2$mi)
+
+ret_mi_plot = ggplot(table_morans2, aes(x = year, y = mi)) +
+  geom_col(fill = '#7c238c') + 
+  ggtitle("Ethnic Retailer Clustering by Year") + 
+  facet_wrap(type~.) + 
+  theme_minimal() +
+  ylab("Moran's I Coefficient") +
+  scale_y_continuous(n.breaks = 5)
+
+axis.text.y = element_blank()
+
+ret_mi_plot
+```
+
+## Emerging Hot Spot Analysis
+```{r}
+#| label: create emerging hot spot analysis function
+
+ehsa_man = function(string, df1) {
+
+firstdf = df1 |> select(starts_with(string) | "GeoUID")
+
+data = firstdf |> 
+  st_drop_geometry() |> 
+  pivot_longer(
+    cols = starts_with(string),
+    names_to = "year",
+    names_prefix = string,
+    values_to = "value"
+  ) |> 
+  as_tibble()
+
+geom = firstdf |> 
+  select(GeoUID)
+  
+data$year = as.integer(data$year)
+data = data[complete.cases(data$year),]
+
+data$time = ymd(data$year, truncated = 2L)
+
+bos = spacetime(data, st_as_sf(geom), 
+                 .loc_col = "GeoUID",
+                 .time_col = "time")
+
+ehsa = emerging_hotspot_analysis(
+  x = bos, 
+  .var = "value", 
+  k = 1, 
+  nsim = 99) |> 
+  rename(GeoUID = location)
+
+ehsa = left_join(firstdf, ehsa)
+
+ehsa$color[ehsa$classification == "consecutive coldspot"] = "#003554"
+ehsa$color[ehsa$classification == "consecutive hotspot"] = "#69140E"
+ehsa$color[ehsa$classification == "new coldspot"] = "#00A6FB"
+ehsa$color[ehsa$classification == "new hotspot"] = "#F15025"
+ehsa$color[ehsa$classification == "no pattern detected"] = "beige"
+ehsa$color[ehsa$classification == "oscillating coldspot"] = "#DCB6FF"
+ehsa$color[ehsa$classification == "oscillating hotspot"] = "#FFC6EC"
+ehsa$color[ehsa$classification == "persistent coldspot"] = "#006494"
+ehsa$color[ehsa$classification == "sporadic coldspot"] = "#C2E4F5"
+ehsa$color[ehsa$classification == "sporadic hotspot"] = "#EACDC2"
+
+
+return(ehsa)
+
+}
+```
+
+```{r}
+#| label: employ EHSA on all immigrant groups
+
+SL_ehsa = ehsa_man("SriLanka_", df)
+SL_ehsa_map = tm_shape(area) +
+  tm_borders(col="gray40") +
+tm_shape(SL_ehsa) + tm_fill(col = "color")+
+  tm_compass(position = c("left", "bottom")) + 
+  tm_scale_bar(position = c("left", "bottom")) +
+  tm_add_legend('fill', 
+	col = c("#003554",
+	        "#69140E",
+	        "#00A6FB",
+	        "#F15025",
+	        "beige",
+	        "#DCB6FF",
+	        "#FFC6EC",
+	        "#006494",
+	        "#C2E4F5",
+	        "#EACDC2"),
+	labels = c('consecutive cold spot','consecutive hot spot','new cold spot','new hot spot', 'no pattern detected', 'oscillating cold spot', 'oscillating hot spot', 'persistent cold spot', 'sporadic cold spot', 'sporadic hot spot'),
+	title="EHSA",
+	border.alpha = 0) + 
+  tm_layout(main.title = "Sri Lankan Immigrants",
+            title.snap.to.legend = FALSE,
+            frame = F,
+            legend.outside = T) 
+
+IN_ehsa = ehsa_man("India_", df)
+IN_ehsa_map = tm_shape(area) + tm_polygons(alpha = 0) +
+tm_shape(IN_ehsa) + tm_fill(col = "color")+
+  tm_compass(position = c("left", "bottom")) + 
+  tm_scale_bar(position = c("left", "bottom")) +
+  tm_add_legend('fill', 
+	col = c("#003554",
+	        "#69140E",
+	        "#00A6FB",
+	        "#F15025",
+	        "beige",
+	        "#DCB6FF",
+	        "#FFC6EC",
+	        "#006494",
+	        "#C2E4F5",
+	        "#EACDC2"),
+	labels = c('consecutive cold spot','consecutive hot spot','new cold spot','new hot spot', 'no pattern detected', 'oscillating cold spot', 'oscillating hot spot', 'persistent cold spot', 'sporadic cold spot', 'sporadic hot spot'),
+	title="EHSA",
+	border.alpha = 0) + 
+  tm_layout(main.title = "Indian Immigrants",
+            title.snap.to.legend = FALSE,
+            frame = F,
+            legend.outside = T)
+
+PK_ehsa = ehsa_man("Pakistan_", df)
+PK_ehsa_map = tm_shape(area) + tm_polygons(alpha = 0) +
+tm_shape(PK_ehsa) + tm_fill(col = "color")+
+  tm_compass(position = c("left", "bottom")) + 
+  tm_scale_bar(position = c("left", "bottom")) +
+  tm_add_legend('fill', 
+	col = c("#003554",
+	        "#69140E",
+	        "#00A6FB",
+	        "#F15025",
+	        "beige",
+	        "#DCB6FF",
+	        "#FFC6EC",
+	        "#006494",
+	        "#C2E4F5",
+	        "#EACDC2"),
+	labels = c('consecutive cold spot','consecutive hot spot','new cold spot','new hot spot', 'no pattern detected', 'oscillating cold spot', 'oscillating hot spot', 'persistent cold spot', 'sporadic cold spot', 'sporadic hot spot'),
+	title="EHSA",
+	border.alpha = 0) + 
+  tm_layout(main.title = "Pakistani Immigrants",
+            title.snap.to.legend = FALSE,
+            frame = F,
+            legend.outside = T)
+
+BD_ehsa = ehsa_man("Bangladesh_", df)
+BD_ehsa_map = tm_shape(area) + tm_polygons(alpha = 0) +
+tm_shape(BD_ehsa) + tm_fill(col = "color")+
+  tm_compass(position = c("left", "bottom")) + 
+  tm_scale_bar(position = c("left", "bottom")) +
+  tm_add_legend('fill', 
+	col = c("#003554",
+	        "#69140E",
+	        "#00A6FB",
+	        "#F15025",
+	        "beige",
+	        "#DCB6FF",
+	        "#FFC6EC",
+	        "#006494",
+	        "#C2E4F5",
+	        "#EACDC2"),
+	labels = c('consecutive cold spot','consecutive hot spot','new cold spot','new hot spot', 'no pattern detected', 'oscillating cold spot', 'oscillating hot spot', 'persistent cold spot', 'sporadic cold spot', 'sporadic hot spot'),
+	title="EHSA",
+	border.alpha = 0) + 
+  tm_layout(main.title = "Bangladeshi Immigrants",
+            title.snap.to.legend = FALSE,
+            frame = F,
+            legend.outside = T)
+```
+
+```{r}
+#| label: calculate immigrant retailer EHSA
+
+INR_ehsa = ehsa_man("ret_all_in", df_spat)
+INR_ehsa_map = tm_shape(area) +
+  tm_borders(col="gray40") +
+tm_shape(INR_ehsa) + tm_fill(col = "color")+
+  tm_compass(position = c("left", "bottom")) + 
+  tm_scale_bar(position = c("left", "bottom")) +
+  tm_add_legend('fill', 
+	col = c("#003554",
+	        "#69140E",
+	        "#00A6FB",
+	        "#F15025",
+	        "beige",
+	        "#DCB6FF",
+	        "#FFC6EC",
+	        "#006494",
+	        "#C2E4F5",
+	        "#EACDC2"),
+	labels = c('consecutive cold spot','consecutive hot spot','new cold spot','new hot spot', 'no pattern detected', 'oscillating cold spot', 'oscillating hot spot', 'persistent cold spot', 'sporadic cold spot', 'sporadic hot spot'),
+	title="EHSA",
+	border.alpha = 0) + 
+  tm_layout(main.title = "Indian Retailers",
+            title.snap.to.legend = FALSE,
+            frame = F,
+            legend.outside = T) 
+
+PKR_ehsa = ehsa_man("ret_all_pk20", df_spat)
+PKR_ehsa_map = tm_shape(area) +
+  tm_borders(col="gray40") +
+tm_shape(PKR_ehsa) + tm_fill(col = "color")+
+  tm_compass(position = c("left", "bottom")) + 
+  tm_scale_bar(position = c("left", "bottom")) +
+  tm_add_legend('fill', 
+	col = c("#003554",
+	        "#69140E",
+	        "#00A6FB",
+	        "#F15025",
+	        "beige",
+	        "#DCB6FF",
+	        "#FFC6EC",
+	        "#006494",
+	        "#C2E4F5",
+	        "#EACDC2"),
+	labels = c('consecutive cold spot','consecutive hot spot','new cold spot','new hot spot', 'no pattern detected', 'oscillating cold spot', 'oscillating hot spot', 'persistent cold spot', 'sporadic cold spot', 'sporadic hot spot'),
+	title="EHSA",
+	border.alpha = 0) + 
+  tm_layout(main.title = "Pakistani Retailers",
+            title.snap.to.legend = FALSE,
+            frame = F,
+            legend.outside = T) 
+
+SLR_ehsa = ehsa_man("ret_all_sl", df_spat)
+SLR_ehsa_map = tm_shape(area) +
+  tm_borders(col="gray40") +
+tm_shape(SLR_ehsa) + tm_fill(col = "color")+
+  tm_compass(position = c("left", "bottom")) + 
+  tm_scale_bar(position = c("left", "bottom")) +
+  tm_add_legend('fill', 
+	col = c("#003554",
+	        "#69140E",
+	        "#00A6FB",
+	        "#F15025",
+	        "beige",
+	        "#DCB6FF",
+	        "#FFC6EC",
+	        "#006494",
+	        "#C2E4F5",
+	        "#EACDC2"),
+	labels = c('consecutive cold spot','consecutive hot spot','new cold spot','new hot spot', 'no pattern detected', 'oscillating cold spot', 'oscillating hot spot', 'persistent cold spot', 'sporadic cold spot', 'sporadic hot spot'),
+	title="EHSA",
+	border.alpha = 0) +
+  tm_layout(main.title = "Sri Lankan Retailers",
+            title.snap.to.legend = FALSE,
+            frame = F,
+            legend.outside = T) 
+```
+
+```{r}
+#| label: hot spot analysis for 2016 Bangladeshi retailers
+data_spat_local_g  = df_spat |> 
+  mutate(l_gi = sfdep::local_g_perm(ret_all_bd2016, nb = nb, wt = queen_W)) |> 
+  unnest(l_gi)
+
+BDR_local_g =
+  data_spat_local_g |>
+  mutate(gi_class = case_when(gi <= -1.96 ~ "Cold",
+                              gi >= 1.96 ~ "Hot",
+                              TRUE ~ "Insig."),
+         fct_relevel(gi_class, "Hot", "Insig.", "Cold"))
+
+# map classified data
+BDR_hsa = tm_shape(area) +
+  tm_borders(col="gray40") +
+tm_shape(BDR_local_g) + 
+  tm_fill(col = "gi_class", 
+          palette = c("#F15025",
+                      "beige",# for Insig
+                      "beige" # for Insig
+                      ),
+          title = "Gi Hot Spot Analysis") +
+  tm_compass(position = c("left", "bottom")) + 
+  tm_scale_bar(position = c("left", "bottom")) +
+  tm_layout(main.title = "Bangladeshi Retailers (2016)",
+            title.snap.to.legend = FALSE,
+            frame = F,
+            legend.outside = T)
+```
+
+## Spatial Panel Model
+
+```{r}
+#| label: make a 1st order row-normalized neighbors matrix
+
+W_norm = mOrdNbr(sf_pol = df, m = 1, rn = T) 
+```
+
+```{r}
+#| label: calculate log-marginal posterior probabilities to identify most appropriate spatial model 
+
+#South Asian retailers and education model
+bas_bach_sa =blmpSDPD(formula = ret_all_sa ~ bachplusPerc*  IndiaPerc + 
+                             bachplusPerc *  PakistanPerc + 
+                             bachplusPerc*  BangladeshPerc + 
+                             bachplusPerc *  SriLankaPerc
+               , data = df_long, W = W_norm,
+               index = c("GeoUID","year"),
+               model = list("sar","sdm",'sdem',"sem","slx"), 
+               effect = "time")
+bas_bach_sa #sdem
+
+#Ethnic retailers and education model
+bas_bach_ethnic =blmpSDPD(formula = ret_all_ethnic ~ bachplusPerc*  IndiaPerc + 
+                             bachplusPerc *  PakistanPerc + 
+                             bachplusPerc*  BangladeshPerc + 
+                             bachplusPerc *  SriLankaPerc
+               , data = df_long, W = W_norm,
+               index = c("GeoUID","year"),
+               model = list("sar","sdm",'sdem',"sem","slx"), 
+               effect = "time")
+bas_bach_ethnic #sdem
+
+#South Asian retailers and income model
+bas_mhinc_sa =blmpSDPD(formula = ret_all_sa ~ mhinc*  IndiaPerc + 
+                             mhinc *  PakistanPerc + 
+                             mhinc*  BangladeshPerc + 
+                             mhinc *  SriLankaPerc
+               , data = df_long, W = W_norm,
+               index = c("GeoUID","year"),
+               model = list("sar","sdm","sem","sdem","slx"), 
+               effect = "time")
+#South Asian retailers and income model
+
+#Ethinc retailers and income model
+bas_mhinc_ethnic =blmpSDPD(formula = ret_all_ethnic ~ mhinc*  IndiaPerc + 
+                             mhinc *  PakistanPerc + 
+                             mhinc*  BangladeshPerc + 
+                             mhinc *  SriLankaPerc
+               , data = df_long, W = W_norm,
+               index = c("GeoUID","year"),
+               model = list("sar","sdm","sem","sdem","slx"), 
+               effect = "time")
+bas_mhinc_ethnic #sar
+```
+
+```{r}
+#| label: create spatial panel models
+
+#South Asian retilers and education model
+mod_bach_sa =SDPDm(formula = ret_all_sa ~ bachplusPerc*  IndiaPerc + 
+                             bachplusPerc *  PakistanPerc + 
+                             bachplusPerc*  BangladeshPerc + 
+                             bachplusPerc *  SriLankaPerc, 
+                        data = df_long, W = W_norm,
+            index = c("GeoUID","year"),
+            model = "sar", 
+            effect = "time")
+
+#Ethnic retailers and education model
+mod_bach_ethnic =SDPDm(formula = ret_all_ethnic ~ bachplusPerc*  IndiaPerc + 
+                             bachplusPerc *  PakistanPerc + 
+                             bachplusPerc*  BangladeshPerc + 
+                             bachplusPerc *  SriLankaPerc, 
+                        data = df_long, W = W_norm,
+            index = c("GeoUID","year"),
+            model = "sar", 
+            effect = "time")
+
+#Ethnic retailers and income model
+mod_mhinc_ethnic =SDPDm(formula = ret_all_ethnic ~ mhinc*  IndiaPerc + 
+                             mhinc *  PakistanPerc + 
+                             mhinc*  BangladeshPerc + 
+                             mhinc *  SriLankaPerc, 
+                        data = df_long, W = W_norm,
+            index = c("GeoUID","year"),
+            model = "sar", 
+            effect = "time")
+
+#South Asian retailers and income model
+mod_mhinc_sa =SDPDm(formula = ret_all_sa ~ mhinc*  IndiaPerc + 
+                             mhinc *  PakistanPerc + 
+                             mhinc*  BangladeshPerc + 
+                             mhinc *  SriLankaPerc, 
+                        data = df_long, W = W_norm,
+            index = c("GeoUID","year"),
+            model = "sar", 
+            effect = "time")
+```
+
+```{r}
+#| label: spatial panel model results
+
+#South Asian retailers and education model
+summary(mod_bach_sa)
+impactsSDPDm(mod_bach_sa) |> summary()
+
+#South Asian retailers and income model
+summary(mod_mhinc_sa)
+impactsSDPDm(mod_mhinc_sa) |> summary()
+
+#Ethnic retailers and education model
+summary(mod_bach_ethnic)
+impactsSDPDm(mod_bach_ethnic) |> summary()
+
+#Ethnic retailers and income model
+summary(mod_mhinc_ethnic)
+impactsSDPDm(mod_mhinc_ethnic) |> summary() 
+```
