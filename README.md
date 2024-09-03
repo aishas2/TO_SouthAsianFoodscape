@@ -1,4 +1,4 @@
-# TO_SouthAsianGrocery
+# South Asian Immigrants and Foodscapes in Scarborough and Markham, Ontario
 Code from my MA Thesis, Immigrant Impact: Deconstructing the Production of the South Asian Immigrant Food Environment. This thesis was written at the University of Toronto in 2024 under the supervision of Dr. Michael Widener and Dr. Lindsey Smith.
 
 ## Abstract
