@@ -654,10 +654,12 @@ df_vizret$var[df_vizret$var == '_all_bd'] = 'Bangladeshi Retailers'
 df_vizret$var[df_vizret$var == '_all_sl'] = 'Sri Lankan Retailers'
 
 df_vizLong = aggregate(df_Long1$count, by=list(year=df_Long1$year, var=df_Long1$var), FUN=sum) |> 
-  rename(count = x, type = var) 
+  rename(count = x, type = var) |> 
+  mutate(year = as.integer(df_vizLong$year))
 
 df_vizret = aggregate(df_vizret$count, by=list(year=df_vizret$year, var=df_vizret$var), FUN=sum) |> 
   rename(count = x, type = var)
+df_vizret$year = as.integer(df_vizret$year)
 
 #make plot
 p1 = ggplot(df_vizLong, aes(x=year, y=count, group=type)) + 
