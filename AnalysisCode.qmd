@@ -448,13 +448,24 @@ fdf = st_filter(foodenv, df, .predicate = st_intersects)
 #| label: create retailers map
 
 tm_shape(area) + tm_fill(col = "#381034") +
-  tm_shape(df) + tm_polygons(col = "#E7BEEF", border.col = "#381034") +
+  
+  tm_shape(df) + tm_polygons(col = "#E5F5F9", border.col = "#381034") +
+  tm_add_legend(type = "fill", labels = "Census Tract", col = "#E5F5F9", border.col = "#381034", title = "Legend") +
+  
   tm_shape(area) + tm_borders(col = "#381034") +
+  
   tm_shape(foodenv |> st_buffer(1000)) + tm_polygons(col = "#381034", alpha = 0.01, border.alpha = 0.01) +
+  tm_add_legend(type = "fill", labels = "1-km Buffer", col = "#381034", alpha = 0.05, border.alpha = 0.05) +
+  
   tm_shape(foodenv) + tm_dots(col = "#381034", size = 0.01) +
-  tm_shape(fdf) + tm_dots(col = "white", size = 0.02) +
+  tm_add_legend(type = "symbol", labels = "Food Retailers", col = "#381034", size = 0.1, lwd = 0,  border.alpha = 0) +
+
+  tm_shape(fdf) + tm_dots(col = "white", size = 0.03) +
+  tm_add_legend(type = "symbol", labels = "Food Retailers In Study Area", col = "white", size = .2, border.alpha = 0) +
+  
   tm_compass(position = c("left", "bottom")) + 
-  tm_scale_bar(position = c("left", "bottom"))
+  tm_scale_bar(position = c("left", "bottom")) +
+  tm_layout(legend.outside = T, legend.bg.color = "#DAE3E7", legend.outside.position = "left")
 ```
 
 ```{r}
